@@ -1,0 +1,305 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Smart Bird Feeder · 3D Viewer</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="modulepreload" href="vendor/three/build/three.module.min.js">
+<link rel="preload" href="birdhouse.glb" as="fetch" type="model/gltf-binary" crossorigin="anonymous">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Syne:wght@400;500;600;700&display=swap">
+<style>
+  :root{
+    --paper:#FBFBFB; --ink:#000; --muted:rgba(0,0,0,.55); --line:rgba(0,0,0,.85); --accent:#FF5E1A; --bar:#000;
+    --font:"Syne","Helvetica Neue",Helvetica,Arial,sans-serif;
+  }
+  *{box-sizing:border-box}
+  [hidden]{display:none!important}
+  html,body{height:100%; margin:0}
+  body{background:var(--paper); color:var(--ink); font-family:var(--font); font-size:14px; letter-spacing:.01em; -webkit-font-smoothing:antialiased; overflow:hidden}
+  button{font:inherit; color:inherit; cursor:pointer; letter-spacing:.01em}
+  :focus-visible{outline:2px solid var(--accent); outline-offset:2px}
+  #stage{position:fixed; inset:0}
+  canvas{display:block; width:100%; height:100%; touch-action:none}
+  .views{position:absolute; top:calc(16px + env(safe-area-inset-top,0px)); left:16px; right:16px; display:flex; gap:8px; overflow-x:auto; scrollbar-width:none}
+  .views::-webkit-scrollbar{display:none}
+  .views > :first-child{margin-left:auto} .views > :last-child{margin-right:auto}
+  .views button{flex:0 0 auto; border:1px solid var(--line); background:rgba(251,251,251,.8); border-radius:999px; padding:6px 14px; font-size:13px}
+  .views button:hover{background:rgba(0,0,0,.05)}
+  .views button[aria-pressed="true"]{border-color:var(--accent); background:var(--accent); color:#fff}
+  .bar{position:absolute; left:50%; bottom:calc(40px + env(safe-area-inset-bottom,0px)); transform:translateX(-50%); display:flex; align-items:center; gap:18px;
+    background:var(--bar); color:#fff; border-radius:999px; padding:6px 22px 6px 6px; white-space:nowrap; max-width:calc(100% - 32px)}
+  .seg{display:inline-flex; border-radius:999px}
+  .seg button{border:0; background:none; border-radius:999px; padding:8px 18px; font-size:14px; color:#fff}
+  .seg button[aria-pressed="true"]{background:var(--accent)}
+  .ctl{display:flex; align-items:center; gap:10px; font-size:11.5px; font-weight:600; letter-spacing:.1em; text-transform:uppercase; color:rgba(255,255,255,.72)}
+  .ctl input{width:120px; accent-color:var(--accent)}
+  .ctl output{min-width:2.6em; color:#fff; font-weight:500; letter-spacing:.02em}
+  .hint{position:absolute; left:16px; bottom:calc(14px + env(safe-area-inset-bottom,0px)); font-size:12px; color:var(--muted)}
+  .loading{position:absolute; inset:0; display:grid; place-items:center; font-size:12px; font-weight:600; letter-spacing:.14em; text-transform:uppercase; color:var(--muted); pointer-events:none}
+  .loading i{display:block; width:160px; height:2px; background:rgba(0,0,0,.1); margin-top:12px}
+  .loading b{display:block; height:100%; width:0; background:var(--accent); transition:width .15s}
+  @media (max-width:640px){
+    .bar{gap:10px; padding:5px 14px 5px 5px; bottom:calc(34px + env(safe-area-inset-bottom,0px))}
+    .seg button{padding:7px 13px; font-size:13px}
+    .ctl{font-size:0; gap:6px} .ctl input{width:74px} .ctl output{font-size:11px}
+  }
+</style>
+</head>
+<body>
+<div id="stage">
+  <div class="views" id="views" role="group" aria-label="Views"></div>
+  <div class="bar">
+    <div class="seg" role="group" aria-label="Render mode">
+      <button id="m-xray" aria-pressed="true">X-ray</button>
+      <button id="m-draw" aria-pressed="false">Drawing</button>
+    </div>
+    <label class="ctl" id="expCtl" for="exp">Exposure <input id="exp" type="range" min="25" max="300" value="100"> <output id="expV">1.0</output></label>
+    <label class="ctl" for="exl">Explode <input id="exl" type="range" min="0" max="100" value="0"> <output id="exlV">0%</output></label>
+  </div>
+  <div class="hint">drag to orbit, scroll to zoom</div>
+  <div class="loading" id="loading"><div>Loading model<i><b id="prog"></b></i></div></div>
+</div>
+
+<script type="importmap">
+{ "imports": {
+  "three": "./vendor/three/build/three.module.min.js",
+  "three/addons/": "./vendor/three/examples/jsm/"
+}}
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+
+// ---------------- renderer (render on demand: nothing is drawn while the view is idle) ----------------
+const stage = document.getElementById('stage');
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: 'high-performance' });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
+renderer.setClearColor(0xfbfbfb, 1);
+stage.prepend(renderer.domElement);
+const scene = new THREE.Scene();
+scene.environment = new THREE.PMREMGenerator(renderer).fromScene(new RoomEnvironment(), .04).texture;
+scene.environmentIntensity = .28;
+scene.add(new THREE.HemisphereLight(0xffffff, 0xd9d9dc, 1.0));
+const key = new THREE.DirectionalLight(0xffffff, .55); key.position.set(-20, 60, 30); scene.add(key);
+const camera = new THREE.PerspectiveCamera(30, 1, .05, 400);
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true; controls.enableZoom = false;       // wheel zoom only after the viewer is clicked, so page scrolling isn't hijacked
+renderer.domElement.addEventListener('pointerdown', () => { controls.enableZoom = true; });
+renderer.domElement.addEventListener('pointerleave', () => { controls.enableZoom = false; });
+let needsRender = true, settle = 0;          // settle: a few extra frames after load / mode change
+controls.addEventListener('change', () => { needsRender = true; });
+
+// ---------------- materials ----------------
+const MU = { shell:.26, lime:.26, inner:.3, black:.34, graphite:2.4, glass:.8, lens:1.4, matteblack:.4, irled:1.2, sensor:1.2, statusled:.5,
+  rubber:.6, metal:6.5, pcb:1.8, white:.4, smd:4.0, fpc:.9, gold:6.5, fresnel:.35, irfilter:1.0, irwindow:.9, brass:7.0, cable:1.0, dark:.6 };
+const TINT = { black:'#dcdcdf', graphite:'#d8d8db', lens:'#cfd0d4', matteblack:'#d6d6d9', irled:'#d8d4d6', sensor:'#d6d6d9', rubber:'#d4d4d7',
+  dark:'#d9d9dc', inner:'#e4e4e6', irwindow:'#d2cfd1', irfilter:'#d6d3d5', pcb:'#dfe3df', metal:'#e6e6e8', gold:'#e8e4da', brass:'#e8e3d6',
+  glass:'#eef1f4', fpc:'#ece5da', smd:'#e6e3dd', white:'#f4f4f4', statusled:'#f2f4ee', cable:'#d4d4d7' };
+const xU = { ref: { value: 50 } };
+const absorbCache = {};
+const absorbMat = (mu, sheet) => absorbCache[mu + '|' + sheet] ||= new THREE.ShaderMaterial({
+  uniforms: { mu: { value: mu }, sheet: { value: sheet }, ref: xU.ref },
+  vertexShader: `varying float vD; varying vec3 vN; varying vec3 vV;
+    void main(){ vec4 mv = modelViewMatrix * vec4(position, 1.0); vD = length(mv.xyz); vN = normalMatrix * normal; vV = normalize(-mv.xyz); gl_Position = projectionMatrix * mv; }`,
+  fragmentShader: `uniform float mu, sheet, ref; varying float vD; varying vec3 vN; varying vec3 vV;
+    void main(){ float v;
+      if (sheet > 0.0) { float c = max(abs(dot(normalize(vN), vV)), 0.2); v = mu * sheet / c; }
+      else v = (gl_FrontFacing ? -1.0 : 1.0) * mu * (vD - ref);
+      gl_FragColor = vec4(v, 0.0, 0.0, 1.0); }`,
+  side: THREE.DoubleSide, transparent: true, depthTest: false, depthWrite: false,
+  blending: THREE.CustomBlending, blendEquation: THREE.AddEquation, blendSrc: THREE.OneFactor, blendDst: THREE.OneFactor });
+const fillCache = {};
+const drawFill = k => fillCache[k] ||= new THREE.MeshStandardMaterial({ color: TINT[k] || '#ffffff', roughness: .9, metalness: 0,
+  polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1, side: THREE.DoubleSide });
+const depthOnly = new THREE.MeshBasicMaterial({ colorWrite: false, side: THREE.DoubleSide });
+const normalMat = new THREE.MeshNormalMaterial({ side: THREE.DoubleSide });
+const blackId = new THREE.MeshBasicMaterial({ color: 0x000000, side: THREE.DoubleSide });
+let nextId = 1;
+const idMat = () => { const i = nextId++; return new THREE.MeshBasicMaterial({ side: THREE.DoubleSide,
+  color: new THREE.Color().setRGB((i & 255) / 255, ((i >> 8) & 255) / 255, 0, THREE.LinearSRGBColorSpace) }); };
+
+// ---------------- x-ray: thickness x density accumulated along each ray ----------------
+const floatBlend = renderer.extensions.has('EXT_float_blend');
+const xRT = new THREE.WebGLRenderTarget(4, 4, { type: floatBlend ? THREE.FloatType : THREE.HalfFloatType });
+const quadCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+const xMat = new THREE.ShaderMaterial({ uniforms: { t: { value: xRT.texture }, k: { value: 1 } },
+  vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }',
+  fragmentShader: `uniform sampler2D t; uniform float k; varying vec2 vUv;
+    void main(){ float a = max(texture2D(t, vUv).r, 0.0); float I = pow(exp(-a * k), 0.85); gl_FragColor = vec4(mix(vec3(0.035), vec3(0.985), I), 1.0); }`,
+  depthTest: false, depthWrite: false, toneMapped: false });
+const xScene = new THREE.Scene(); xScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), xMat));
+
+// ---------------- drawing: fills + outlines (normal / depth / part-id edges), outer shells as a translucent veil ----------------
+const dRT = {};
+function target(name, w, h, depth, srgb) {
+  let t = dRT[name];
+  if (!t) { t = dRT[name] = new THREE.WebGLRenderTarget(w, h, { minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter });
+    if (srgb) t.texture.colorSpace = THREE.SRGBColorSpace; if (depth) t.depthTexture = new THREE.DepthTexture(w, h); }
+  if (t.width !== w || t.height !== h) t.setSize(w, h);
+  return t;
+}
+const dMat = new THREE.ShaderMaterial({
+  uniforms: { fIn:{value:null}, nIn:{value:null}, dIn:{value:null}, iIn:{value:null}, fSh:{value:null}, nSh:{value:null}, dSh:{value:null}, iSh:{value:null},
+    res:{value:new THREE.Vector2()}, R:{value:1.5}, cn:{value:.05}, cf:{value:400}, veil:{value:.6},
+    paper:{value:new THREE.Color(0xfbfbfb)}, lIn:{value:new THREE.Color(0x2b2b2e)}, lSh:{value:new THREE.Color(0x46464a)} },
+  vertexShader: 'void main(){ gl_Position = vec4(position.xy, 0.0, 1.0); }',
+  fragmentShader: `
+    #include <packing>
+    uniform sampler2D fIn, nIn, dIn, iIn, fSh, nSh, dSh, iSh; uniform vec2 res; uniform float R, cn, cf, veil; uniform vec3 paper, lIn, lSh;
+    float vz(sampler2D d, vec2 uv){ return -perspectiveDepthToViewZ(texture2D(d, uv).r, cn, cf); }
+    float edges(sampler2D n, sampler2D d, sampler2D idt, vec2 uv, bool mask){
+      vec4 ic = texture2D(idt, uv); bool fc = ic.a > .5;
+      if (mask && !(fc && length(ic.rgb) > .0005)) return 0.0;
+      vec3 nc = texture2D(n, uv).rgb * 2.0 - 1.0; float zc = vz(d, uv); float e = 0.0;
+      for (int k = 0; k < 12; k++) {
+        float a = 6.2831853 * float(k) / 12.0; vec2 o = vec2(cos(a), sin(a)) * R / res;
+        vec4 is = texture2D(idt, uv + o); bool fs = is.a > .5;
+        if (!fc && !fs) continue;
+        float ed = 0.0;
+        if (fc != fs) ed = 1.0;
+        else {
+          if (distance(ic.rgb, is.rgb) > .002) ed = 1.0;
+          float zs = vz(d, uv + o); if (abs(zc - zs) > max(.12, .012 * zc)) ed = 1.0;
+          vec3 ns = texture2D(n, uv + o).rgb * 2.0 - 1.0; if (dot(normalize(nc), normalize(ns)) < .84) ed = 1.0;
+        }
+        e += ed;
+      }
+      return clamp(e / 12.0 * 2.4, 0.0, 1.0);
+    }
+    void main(){
+      vec2 uv = gl_FragCoord.xy / res;
+      vec4 fi = texture2D(fIn, uv); vec3 c = fi.a > .5 ? fi.rgb : paper;
+      c = mix(c, lIn, edges(nIn, dIn, iIn, uv, false));
+      vec4 fs = texture2D(fSh, uv); if (fs.a > .5) c = mix(c, fs.rgb, veil);
+      c = mix(c, lSh, edges(nSh, dSh, iSh, uv, true));
+      gl_FragColor = linearToOutputTexel(vec4(c, 1.0));
+    }`, depthTest: false, depthWrite: false, toneMapped: false });
+const dScene = new THREE.Scene(); dScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), dMat));
+
+const parts = [];
+let mode = 'xray';
+function renderXray() {
+  const sz = renderer.getDrawingBufferSize(new THREE.Vector2());
+  if (xRT.width !== sz.x || xRT.height !== sz.y) xRT.setSize(sz.x, sz.y);
+  xU.ref.value = camera.position.distanceTo(controls.target);
+  parts.forEach(m => { m.material = m.userData.absorb; });
+  renderer.setRenderTarget(xRT); renderer.setClearColor(0x000000, 0); renderer.clear(); renderer.render(scene, camera);
+  renderer.setRenderTarget(null); renderer.render(xScene, quadCam);
+}
+function renderDrawing() {
+  const sz = renderer.getDrawingBufferSize(new THREE.Vector2()), w = sz.x, h = sz.y;
+  const pass = (rt, mat, vis) => { parts.forEach(m => { m.visible = vis(m); m.material = mat(m); });
+    renderer.setRenderTarget(rt); renderer.setClearColor(0x000000, 0); renderer.clear(); renderer.render(scene, camera); };
+  const inner = m => !m.userData.shell, all = () => true;
+  pass(target('fIn', w, h, false, true), m => m.userData.fill, inner);
+  pass(target('nIn', w, h, true, false), () => normalMat, inner);
+  pass(target('iIn', w, h, false, false), m => m.userData.id, inner);
+  pass(target('fSh', w, h, false, true), m => m.userData.shell ? m.userData.fill : depthOnly, all);
+  pass(target('nSh', w, h, true, false), () => normalMat, all);
+  pass(target('iSh', w, h, false, false), m => m.userData.shell ? m.userData.id : blackId, all);
+  parts.forEach(m => { m.visible = true; });
+  renderer.setRenderTarget(null);
+  const u = dMat.uniforms;
+  u.fIn.value = dRT.fIn.texture; u.nIn.value = dRT.nIn.texture; u.dIn.value = dRT.nIn.depthTexture; u.iIn.value = dRT.iIn.texture;
+  u.fSh.value = dRT.fSh.texture; u.nSh.value = dRT.nSh.texture; u.dSh.value = dRT.nSh.depthTexture; u.iSh.value = dRT.iSh.texture;
+  u.res.value.set(w, h); u.R.value = 1.5 * renderer.getPixelRatio(); u.cn.value = camera.near; u.cf.value = camera.far;
+  renderer.render(dScene, quadCam);
+}
+
+// ---------------- UI ----------------
+const VIEWS = {
+  overall:{ label:'Overall', t:[0,45,-4], p:[32,58,38] },
+  camera: { label:'Camera', t:[0,42.875,5.55], p:[1.6,43.7,9.4] },
+  mouth:  { label:'Mouth', t:[0,37.6,3.9], p:[2.6,41.8,9.6] },
+  roof:   { label:'Roof underside', t:[4.2,47.3,4.2], p:[9.5,43.2,10.5] },
+  wall:   { label:'Wall plate', t:[0,45.2,-15.6], p:[-9,49,-6.5] },
+  side:   { label:'Arm side view', t:[0,44.3,-13.2], p:[16,44.3,-13.2] },
+  sensors:{ label:'IR sensors', t:[0,41.3,5.3], p:[2.2,42.4,8.6] },
+  bay:    { label:'Charging bay', t:[0,39.25,-5.0], p:[2.2,37.9,-9.6] },
+  rear:   { label:'Rear internals', t:[0,40.2,-4.1], p:[2.6,42.6,1.2] },
+};
+const viewsEl = document.getElementById('views');
+let active = 'overall', fl = null;
+for (const [k, v] of Object.entries(VIEWS)) {
+  const b = document.createElement('button'); b.textContent = v.label; b.dataset.view = k; b.setAttribute('aria-pressed', k === active);
+  b.onclick = () => fly(k); viewsEl.appendChild(b);
+}
+function fly(k) {
+  active = k; viewsEl.querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', b.dataset.view === k));
+  let t = new THREE.Vector3(...VIEWS[k].t), p = new THREE.Vector3(...VIEWS[k].p);
+  if (k === 'overall' && parts.length) [t, p] = overallFrame();
+  fl = { t0: performance.now(), fromT: controls.target.clone(), fromP: camera.position.clone(), toT: t, toP: p };
+}
+// frame the whole model from the overall direction: centred on its bounds, sitting a little above the middle (clear of the bottom bar)
+function overallFrame() {
+  const box = new THREE.Box3(); parts.forEach(m => box.expandByObject(m));
+  const s = box.getBoundingSphere(new THREE.Sphere()), c = box.getCenter(new THREE.Vector3());
+  const dir = new THREE.Vector3(...VIEWS.overall.p).sub(new THREE.Vector3(...VIEWS.overall.t)).normalize();
+  const vf = THREE.MathUtils.degToRad(camera.fov) / 2, hf = Math.atan(Math.tan(vf) * camera.aspect);
+  const dist = s.radius / Math.sin(Math.min(vf, hf)) * 1.02;
+  const t = c.clone(); t.y -= s.radius * .12;                    // lower target = model sits higher on screen
+  return [t, t.clone().addScaledVector(dir, dist)];
+}
+const setMode = m => {
+  mode = m; document.getElementById('m-xray').setAttribute('aria-pressed', m === 'xray'); document.getElementById('m-draw').setAttribute('aria-pressed', m === 'draw');
+  document.getElementById('expCtl').hidden = m !== 'xray'; needsRender = true; settle = 2;
+};
+document.getElementById('m-xray').onclick = () => setMode('xray');
+document.getElementById('m-draw').onclick = () => setMode('draw');
+document.getElementById('exp').oninput = e => { xMat.uniforms.k.value = e.target.value / 100; document.getElementById('expV').textContent = (e.target.value / 100).toFixed(1); needsRender = true; };
+let explode = 0;
+document.getElementById('exl').oninput = e => {
+  explode = e.target.value / 100; document.getElementById('exlV').textContent = e.target.value + '%';
+  parts.forEach(m => m.position.copy(m.userData.base).addScaledVector(m.userData.ex, explode)); needsRender = true;
+};
+document.getElementById('exl').onchange = () => { if (active === 'overall') fly('overall'); };
+
+// ---------------- load (compressed GLB, with streaming progress) ----------------
+async function fetchModel() {
+  let r = await fetch('birdhouse.glb');
+  if (!r.ok) { const t = await (await fetch('birdhouse.glb.txt')).text(); return Uint8Array.from(atob(t.replace(/\s/g, '')), c => c.charCodeAt(0)).buffer; }
+  const total = +r.headers.get('content-length') || 0, reader = r.body.getReader(), chunks = []; let got = 0;
+  for (;;) { const { done, value } = await reader.read(); if (done) break; chunks.push(value); got += value.length;
+    if (total) document.getElementById('prog').style.width = Math.min(100, got / total * 100) + '%'; }
+  const buf = new Uint8Array(got); let o = 0; for (const c of chunks) { buf.set(c, o); o += c.length; }
+  return buf.buffer;
+}
+const loader = new GLTFLoader().setMeshoptDecoder(MeshoptDecoder);
+fetchModel().then(buf => loader.parseAsync(buf, '')).then(gltf => {
+  gltf.scene.traverse(o => {
+    if (!o.isMesh) return;
+    const x = o.userData;
+    o.userData = { ...x, base: o.position.clone(), ex: new THREE.Vector3(...(x.ex || [0, 0, 0])),
+      absorb: absorbMat(MU[x.mat] ?? .6, x.closed ? 0 : .08), fill: drawFill(x.shell ? 'shell' : x.mat), id: idMat() };
+    o.frustumCulled = false; parts.push(o);
+  });
+  scene.add(gltf.scene);
+  const [t0, p0] = overallFrame(); controls.target.copy(t0); camera.position.copy(p0); camera.lookAt(t0);
+  document.getElementById('loading').hidden = true; controls.update(); camera.updateMatrixWorld(); needsRender = true; settle = 4;
+}).catch(err => { document.getElementById('loading').firstElementChild.textContent = 'Could not load the model'; console.error(err); });
+
+// ---------------- loop ----------------
+camera.position.set(...VIEWS.overall.p); controls.target.set(...VIEWS.overall.t); camera.lookAt(controls.target); controls.update();
+function resize() { const w = stage.clientWidth, h = stage.clientHeight; renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix(); needsRender = true;
+  if (active === 'overall' && parts.length && !fl) { const [t, p] = overallFrame(); controls.target.copy(t); camera.position.copy(p); } }
+new ResizeObserver(resize).observe(stage); resize();
+renderer.setAnimationLoop(now => {
+  if (fl) {
+    const t = Math.min(1, (now - fl.t0) / 900), e = t < .5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+    controls.target.lerpVectors(fl.fromT, fl.toT, e); camera.position.lerpVectors(fl.fromP, fl.toP, e); needsRender = true;
+    if (t >= 1) fl = null;
+  }
+  if (controls.update()) needsRender = true;
+  if (settle > 0 && parts.length) { settle--; needsRender = true; }
+  if (!needsRender || !parts.length) return;          // browsers already stop frames in hidden tabs / off-screen iframes
+  needsRender = false;
+  mode === 'xray' ? renderXray() : renderDrawing();
+});
+</script>
+</body>
+</html>

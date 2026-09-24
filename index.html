@@ -71,7 +71,7 @@
 <body>
 <div id="stage">
   <div class="top">
-    <div class="title"><h1>Interact with model</h1><p id="hint">drag to orbit, ⌘ + scroll to zoom</p></div>
+    <div class="title"><h1>Interact with model</h1><p id="hint">drag to orbit, pinch or ⌘ + scroll to zoom</p></div>
     <div class="views" id="views" role="group" aria-label="Views"></div>
   </div>
   <div class="bar">
@@ -124,7 +124,7 @@ const coarse = matchMedia('(pointer: coarse)').matches;
 const isMac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
 document.body.classList.toggle('coarse', coarse);
 const hintEl = document.getElementById('hint'), toastEl = document.getElementById('toast'), interactEl = document.getElementById('interact');
-hintEl.textContent = coarse ? 'tap to interact, pinch to zoom' : `drag to orbit, ${isMac ? '⌘' : 'Ctrl'} + scroll to zoom`;
+hintEl.textContent = coarse ? 'tap to interact, pinch to zoom' : `drag to orbit, pinch or ${isMac ? '⌘' : 'Ctrl'} + scroll to zoom`;
 let toastTimer = 0;
 function toast(msg) { toastEl.textContent = msg; toastEl.classList.add('show'); clearTimeout(toastTimer); toastTimer = setTimeout(() => toastEl.classList.remove('show'), 1400); }
 function dolly(scale) {                                                    // scale < 1 moves closer

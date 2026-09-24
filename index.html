@@ -22,6 +22,17 @@
   :focus-visible{outline:2px solid var(--accent); outline-offset:2px}
   #stage{position:fixed; inset:0}
   canvas{display:block; width:100%; height:100%; touch-action:none}
+  body.coarse canvas{touch-action:pan-y}                 /* phones: a swipe scrolls the page until "Tap to interact" */
+  body.coarse.active canvas{touch-action:none}
+  .zoom{position:absolute; right:20px; top:50%; transform:translateY(-50%); display:grid; gap:8px}
+  .zoom button{width:40px; height:40px; border-radius:50%; border:1px solid var(--line); background:rgba(255,255,255,.9); font-size:20px; line-height:1; display:grid; place-items:center; padding:0}
+  .zoom button:hover{background:rgba(0,0,0,.05)}
+  .toast{position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); background:rgba(0,0,0,.78); color:#fff; padding:10px 18px; border-radius:999px;
+    font-size:14px; pointer-events:none; opacity:0; transition:opacity .25s}
+  .toast.show{opacity:1}
+  .interact{position:absolute; left:50%; transform:translateX(-50%); bottom:calc(104px + env(safe-area-inset-bottom,0px)); border:1px solid var(--line);
+    background:rgba(255,255,255,.92); border-radius:999px; padding:9px 18px; font-size:13.5px}
+  body.active .interact{background:var(--accent); border-color:var(--accent); color:#fff}
   .top{position:absolute; top:calc(16px + env(safe-area-inset-top,0px)); left:20px; right:16px; display:flex; align-items:center; gap:28px; pointer-events:none}
   .top > *{pointer-events:auto}
   .title{flex:0 0 auto}
@@ -53,13 +64,14 @@
       padding:8px 14px 10px; bottom:calc(16px + env(safe-area-inset-bottom,0px))}
     .seg button{padding:7px 16px; font-size:13px}
     .ctl{font-size:10px; gap:7px; letter-spacing:.08em} .ctl input{width:88px} .ctl output{font-size:11px; min-width:2.4em}
+    .zoom{right:12px} .zoom button{width:36px; height:36px}
   }
 </style>
 </head>
 <body>
 <div id="stage">
   <div class="top">
-    <div class="title"><h1>Interact with model</h1><p>drag to orbit, scroll to zoom</p></div>
+    <div class="title"><h1>Interact with model</h1><p id="hint">drag to orbit, ⌘ + scroll to zoom</p></div>
     <div class="views" id="views" role="group" aria-label="Views"></div>
   </div>
   <div class="bar">
@@ -70,6 +82,12 @@
     <label class="ctl" id="expCtl" for="exp">Exposure <input id="exp" type="range" min="25" max="300" value="100"> <output id="expV">1.0</output></label>
     <label class="ctl" for="exl">Explode <input id="exl" type="range" min="0" max="100" value="0"> <output id="exlV">0%</output></label>
   </div>
+  <div class="zoom" role="group" aria-label="Zoom">
+    <button id="zIn" aria-label="Zoom in">+</button>
+    <button id="zOut" aria-label="Zoom out">&minus;</button>
+  </div>
+  <button class="interact" id="interact" hidden>Tap to interact</button>
+  <div class="toast" id="toast" role="status"></div>
   <div class="loading" id="loading"><div>Loading model<i><b id="prog"></b></i></div></div>
 </div>
 
@@ -99,9 +117,42 @@ scene.add(new THREE.HemisphereLight(0xffffff, 0xd9d9dc, 1.0));
 const key = new THREE.DirectionalLight(0xffffff, .55); key.position.set(-20, 60, 30); scene.add(key);
 const camera = new THREE.PerspectiveCamera(30, 1, .05, 400);
 const controls = new OrbitControls(camera, renderer.domElement);
-controls.enableDamping = true; controls.enableZoom = false;       // wheel zoom only after the viewer is clicked, so page scrolling isn't hijacked
-renderer.domElement.addEventListener('pointerdown', () => { controls.enableZoom = true; });
-renderer.domElement.addEventListener('pointerleave', () => { controls.enableZoom = false; });
+controls.enableDamping = true;
+// Page scrolling always wins: plain wheel scrolls the host page; zoom = Cmd/Ctrl + wheel, trackpad pinch, or the +/- buttons.
+// Phones: one-finger swipes scroll the page until the visitor taps "Tap to interact".
+const coarse = matchMedia('(pointer: coarse)').matches;
+const isMac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
+document.body.classList.toggle('coarse', coarse);
+const hintEl = document.getElementById('hint'), toastEl = document.getElementById('toast'), interactEl = document.getElementById('interact');
+hintEl.textContent = coarse ? 'tap to interact, pinch to zoom' : `drag to orbit, ${isMac ? '⌘' : 'Ctrl'} + scroll to zoom`;
+let toastTimer = 0;
+function toast(msg) { toastEl.textContent = msg; toastEl.classList.add('show'); clearTimeout(toastTimer); toastTimer = setTimeout(() => toastEl.classList.remove('show'), 1400); }
+function dolly(scale) {                                                    // scale < 1 moves closer
+  const off = camera.position.clone().sub(controls.target);
+  const d = THREE.MathUtils.clamp(off.length() * scale, 1.5, 180);
+  camera.position.copy(controls.target).add(off.setLength(d)); controls.update(); needsRender = true;
+}
+function zoomTo(scale) {                                                   // animated, for the buttons
+  const off = camera.position.clone().sub(controls.target), d = THREE.MathUtils.clamp(off.length() * scale, 1.5, 180);
+  fl = { t0: performance.now(), fromT: controls.target.clone(), fromP: camera.position.clone(), toT: controls.target.clone(), toP: controls.target.clone().add(off.setLength(d)), dur: 350 };
+}
+if (coarse) {
+  controls.enabled = false; controls.enableZoom = true; interactEl.hidden = false;
+  const setActive = on => { controls.enabled = on; document.body.classList.toggle('active', on); interactEl.textContent = on ? 'Done' : 'Tap to interact'; };
+  interactEl.onclick = () => setActive(!document.body.classList.contains('active'));
+} else {
+  controls.enableZoom = false;
+  renderer.domElement.addEventListener('wheel', e => {
+    if (e.ctrlKey || e.metaKey) { e.preventDefault(); dolly(Math.exp(e.deltaY * (e.ctrlKey && !e.metaKey && Math.abs(e.deltaY) < 10 ? .01 : .0025))); }
+    else toast(`Use ${isMac ? '⌘' : 'Ctrl'} + scroll to zoom`);              // let the page scroll
+  }, { passive: false });
+  // Safari trackpad pinch
+  let g0 = 1;
+  renderer.domElement.addEventListener('gesturestart', e => { e.preventDefault(); g0 = 1; });
+  renderer.domElement.addEventListener('gesturechange', e => { e.preventDefault(); dolly(g0 / e.scale); g0 = e.scale; });
+}
+document.getElementById('zIn').onclick = () => zoomTo(.78);
+document.getElementById('zOut').onclick = () => zoomTo(1.28);
 let needsRender = true, settle = 0;          // settle: a few extra frames after load / mode change
 controls.addEventListener('change', () => { needsRender = true; });
 
@@ -301,7 +352,7 @@ function resize() { const w = stage.clientWidth, h = stage.clientHeight; rendere
 new ResizeObserver(resize).observe(stage); resize();
 renderer.setAnimationLoop(now => {
   if (fl) {
-    const t = Math.min(1, (now - fl.t0) / 900), e = t < .5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+    const t = Math.min(1, (now - fl.t0) / (fl.dur || 900)), e = t < .5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
     controls.target.lerpVectors(fl.fromT, fl.toT, e); camera.position.lerpVectors(fl.fromP, fl.toP, e); needsRender = true;
     if (t >= 1) fl = null;
   }

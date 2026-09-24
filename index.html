@@ -33,14 +33,12 @@
   .interact{position:absolute; left:50%; transform:translateX(-50%); bottom:calc(104px + env(safe-area-inset-bottom,0px)); border:1px solid var(--line);
     background:rgba(255,255,255,.92); border-radius:999px; padding:9px 18px; font-size:13.5px}
   body.active .interact{background:var(--accent); border-color:var(--accent); color:#fff}
-  .top{position:absolute; top:calc(16px + env(safe-area-inset-top,0px)); left:20px; right:16px; display:flex; align-items:center; gap:28px; pointer-events:none}
-  .top > *{pointer-events:auto}
-  .title{flex:0 0 auto}
+  /* desktop: title top-left, view buttons stacked in a left column (vertically centred, left edge aligned with the title) */
+  .title{position:absolute; top:calc(22px + env(safe-area-inset-top,0px)); left:28px}
   .title h1{margin:0; font-size:20px; font-weight:600; letter-spacing:-.01em; line-height:1.15}
   .title p{margin:4px 0 0; font-size:13.5px; color:var(--muted)}
-  .views{flex:1 1 auto; min-width:0; display:flex; gap:8px; overflow-x:auto; scrollbar-width:none}
+  .views{position:absolute; left:28px; top:50%; transform:translateY(-50%); display:flex; flex-direction:column; align-items:flex-start; gap:8px}
   .views::-webkit-scrollbar{display:none}
-  .views > :first-child{margin-left:auto} .views > :last-child{margin-right:auto}
   .views button{flex:0 0 auto; border:1px solid var(--line); background:rgba(255,255,255,.85); border-radius:999px; padding:6px 14px; font-size:13px}
   .views button:hover{background:rgba(0,0,0,.05)}
   .views button[aria-pressed="true"]{border-color:var(--accent); background:var(--accent); color:#fff}
@@ -55,9 +53,13 @@
   .loading{position:absolute; inset:0; display:grid; place-items:center; font-size:12px; font-weight:600; letter-spacing:.14em; text-transform:uppercase; color:var(--muted); pointer-events:none}
   .loading i{display:block; width:160px; height:2px; background:rgba(0,0,0,.1); margin-top:12px}
   .loading b{display:block; height:100%; width:0; background:var(--accent); transition:width .15s}
+  @media (max-height:640px) and (min-width:821px){
+    .views{gap:5px} .views button{padding:4px 12px; font-size:12px}
+  }
   @media (max-width:820px){
-    .top{flex-direction:column; align-items:stretch; gap:12px; left:16px}
-    .views > :first-child{margin-left:0}
+    /* phones / narrow embeds: title on top, buttons as one swipeable row underneath */
+    .title{left:16px; top:calc(16px + env(safe-area-inset-top,0px))}
+    .views{left:16px; right:16px; top:calc(78px + env(safe-area-inset-top,0px)); transform:none; flex-direction:row; align-items:center; overflow-x:auto; scrollbar-width:none}
   }
   @media (max-width:640px){
     .bar{left:12px; right:12px; transform:none; max-width:none; flex-wrap:wrap; justify-content:center; gap:8px 16px; border-radius:24px;
@@ -65,15 +67,14 @@
     .seg button{padding:7px 16px; font-size:13px}
     .ctl{font-size:10px; gap:7px; letter-spacing:.08em} .ctl input{width:88px} .ctl output{font-size:11px; min-width:2.4em}
     .zoom{right:12px} .zoom button{width:36px; height:36px}
+    .interact{bottom:calc(128px + env(safe-area-inset-bottom,0px))}
   }
 </style>
 </head>
 <body>
 <div id="stage">
-  <div class="top">
-    <div class="title"><h1>Interact with model</h1><p id="hint">drag to orbit, pinch or ⌘ + scroll to zoom</p></div>
-    <div class="views" id="views" role="group" aria-label="Views"></div>
-  </div>
+  <div class="title"><h1>Interact with model</h1><p id="hint">drag to orbit, pinch or ⌘ + scroll to zoom</p></div>
+  <div class="views" id="views" role="group" aria-label="Views"></div>
   <div class="bar">
     <div class="seg" role="group" aria-label="Render mode">
       <button id="m-xray" aria-pressed="true">X-ray</button>
@@ -302,8 +303,8 @@ function overallFrame() {
   const box = new THREE.Box3(); parts.forEach(m => box.expandByObject(m));
   const s = box.getBoundingSphere(new THREE.Sphere()), c = box.getCenter(new THREE.Vector3());
   const dir = new THREE.Vector3(...VIEWS.overall.p).sub(new THREE.Vector3(...VIEWS.overall.t)).normalize();
-  const vf = THREE.MathUtils.degToRad(camera.fov) / 2, hf = Math.atan(Math.tan(vf) * camera.aspect);
-  const dist = s.radius / Math.sin(Math.min(vf, hf)) * 1.02;
+  const vf = THREE.MathUtils.degToRad(camera.fov) / 2, hf = Math.atan(Math.tan(vf) * freeAspect);
+  const dist = s.radius / Math.sin(Math.min(vf, hf)) * (explode > 0 ? 1.04 : .86);   // assembled: a bit larger; exploded: room for the tall stack
   const t = c.clone(); t.y -= s.radius * .12;                    // lower target = model sits higher on screen
   return [t, t.clone().addScaledVector(dir, dist)];
 }
@@ -347,9 +348,14 @@ fetchModel().then(buf => loader.parseAsync(buf, '')).then(gltf => {
 
 // ---------------- loop ----------------
 camera.position.set(...VIEWS.overall.p); controls.target.set(...VIEWS.overall.t); camera.lookAt(controls.target); controls.update();
-function resize() { const w = stage.clientWidth, h = stage.clientHeight; renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix(); needsRender = true;
+let freeAspect = 1;                          // aspect of the area the model is framed in (right of the button column on desktop)
+function resize() { const w = stage.clientWidth, h = stage.clientHeight; renderer.setSize(w, h, false); camera.aspect = w / h;
+  const side = w > 820 ? viewsEl.getBoundingClientRect().right + 24 : 0;      // width taken by the left column
+  if (side) camera.setViewOffset(w, h, -side / 2, 0, w, h); else camera.clearViewOffset();   // shift the image right by half of it
+  camera.updateProjectionMatrix(); freeAspect = (w - side) / h; needsRender = true;
   if (active === 'overall' && parts.length && !fl) { const [t, p] = overallFrame(); controls.target.copy(t); camera.position.copy(p); } }
 new ResizeObserver(resize).observe(stage); resize();
+document.fonts.ready.then(resize);          // the button column's width depends on the web font
 renderer.setAnimationLoop(now => {
   if (fl) {
     const t = Math.min(1, (now - fl.t0) / (fl.dur || 900)), e = t < .5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;

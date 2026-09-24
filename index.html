@@ -37,7 +37,8 @@
   .title{position:absolute; top:calc(22px + env(safe-area-inset-top,0px)); left:28px}
   .title h1{margin:0; font-size:20px; font-weight:600; letter-spacing:-.01em; line-height:1.15}
   .title p{margin:4px 0 0; font-size:13.5px; color:var(--muted)}
-  .views{position:absolute; left:28px; top:50%; transform:translateY(-50%); display:flex; flex-direction:column; align-items:flex-start; gap:8px}
+  .views{position:absolute; left:28px; top:50%; transform:translateY(-50%); display:flex; flex-direction:column; align-items:stretch; gap:8px}
+  .views button{text-align:center}
   .views::-webkit-scrollbar{display:none}
   .views button{flex:0 0 auto; border:1px solid var(--line); background:rgba(255,255,255,.85); border-radius:999px; padding:6px 14px; font-size:13px}
   .views button:hover{background:rgba(0,0,0,.05)}
@@ -298,15 +299,18 @@ function fly(k) {
   if (k === 'overall' && parts.length) [t, p] = overallFrame();
   fl = { t0: performance.now(), fromT: controls.target.clone(), fromP: camera.position.clone(), toT: t, toP: p };
 }
-// frame the whole model from the overall direction: centred on its bounds, sitting a little above the middle (clear of the bottom bar)
+// frame the whole model from the overall direction, centred on the BIRDHOUSE (the wall arm doesn't pull the framing), in the middle of the page
+const isArm = m => m.userData.group === 'arm' || m.name === 'ex_ae1321ce' || m.name === 'ex_82824cd3';
 function overallFrame() {
-  const box = new THREE.Box3(); parts.forEach(m => box.expandByObject(m));
-  const s = box.getBoundingSphere(new THREE.Sphere()), c = box.getCenter(new THREE.Vector3());
+  const body = new THREE.Box3(); parts.forEach(m => { if (!isArm(m)) body.expandByObject(m); });
+  const c = body.getCenter(new THREE.Vector3());
+  let r = 0; const sph = new THREE.Sphere();                     // radius around the birdhouse centre that still contains every part (arm included)
+  parts.forEach(m => { if (!m.geometry.boundingSphere) m.geometry.computeBoundingSphere();
+    sph.copy(m.geometry.boundingSphere).applyMatrix4(m.matrixWorld); r = Math.max(r, c.distanceTo(sph.center) + sph.radius); });
   const dir = new THREE.Vector3(...VIEWS.overall.p).sub(new THREE.Vector3(...VIEWS.overall.t)).normalize();
-  const vf = THREE.MathUtils.degToRad(camera.fov) / 2, hf = Math.atan(Math.tan(vf) * freeAspect);
-  const dist = s.radius / Math.sin(Math.min(vf, hf)) * (explode > 0 ? 1.04 : .86);   // assembled: a bit larger; exploded: room for the tall stack
-  const t = c.clone(); t.y -= s.radius * .12;                    // lower target = model sits higher on screen
-  return [t, t.clone().addScaledVector(dir, dist)];
+  const vf = THREE.MathUtils.degToRad(camera.fov) / 2, hf = Math.atan(Math.tan(vf) * camera.aspect);
+  const dist = r / Math.sin(Math.min(vf, hf)) * (explode > 0 ? .98 : .78);
+  return [c, c.clone().addScaledVector(dir, dist)];
 }
 const setMode = m => {
   mode = m; document.getElementById('m-xray').setAttribute('aria-pressed', m === 'xray'); document.getElementById('m-draw').setAttribute('aria-pressed', m === 'draw');
@@ -348,11 +352,8 @@ fetchModel().then(buf => loader.parseAsync(buf, '')).then(gltf => {
 
 // ---------------- loop ----------------
 camera.position.set(...VIEWS.overall.p); controls.target.set(...VIEWS.overall.t); camera.lookAt(controls.target); controls.update();
-let freeAspect = 1;                          // aspect of the area the model is framed in (right of the button column on desktop)
 function resize() { const w = stage.clientWidth, h = stage.clientHeight; renderer.setSize(w, h, false); camera.aspect = w / h;
-  const side = w > 820 ? viewsEl.getBoundingClientRect().right + 24 : 0;      // width taken by the left column
-  if (side) camera.setViewOffset(w, h, -side / 2, 0, w, h); else camera.clearViewOffset();   // shift the image right by half of it
-  camera.updateProjectionMatrix(); freeAspect = (w - side) / h; needsRender = true;
+  camera.updateProjectionMatrix(); needsRender = true;
   if (active === 'overall' && parts.length && !fl) { const [t, p] = overallFrame(); controls.target.copy(t); camera.position.copy(p); } }
 new ResizeObserver(resize).observe(stage); resize();
 document.fonts.ready.then(resize);          // the button column's width depends on the web font

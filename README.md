@@ -7,7 +7,8 @@
 | 文件 | 作用 |
 |---|---|
 | `index.html` | 查看器页面 |
-| `birdhouse.glb` | 压缩后的模型，1.6 MB |
+| `birdhouse.glb` | 压缩后的鸟屋模型，1.6 MB |
+| `beeper.glb` | 压缩后的 beeper 模型，0.7 MB（切换到 Beeper 时才加载） |
 | `vendor/three/` | three.js 本地副本（MIT 协议）。网站不依赖任何外部 CDN，可以长期稳定运行 |
 | `.nojekyll` | 让 GitHub Pages 原样发布文件，不要删 |
 | `birdhouse.glb.txt` | 只给 Claude 预览链接用，不用上传（已写进 `.gitignore`） |
@@ -56,3 +57,13 @@
   - 只有在拖动、切换或调滑杆时才渲染，画面静止时几乎不占 CPU 和 GPU。
   - 渲染分辨率上限是 1.5 倍，高分屏上清晰，同时保持流畅。
 - **不抢滚动：** 鼠标滚轮默认滚动页面，在查看器里点一下之后，滚轮才用来缩放模型。
+
+## 切换 Birdhouse / Beeper
+
+页面顶部有 **Birdhouse | Beeper** 切换按钮，每个模型有自己的一组视角按钮。Beeper 只在第一次切换时加载，之后来回切换是即时的。
+
+如果想让嵌入的页面直接打开 Beeper，在网址后面加 `#beeper`：
+
+```html
+<iframe src="https://你的用户名.github.io/birdhouse-viewer/#beeper" ...></iframe>
+```

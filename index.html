@@ -51,6 +51,10 @@
   .ctl{display:flex; align-items:center; gap:10px; font-size:11.5px; font-weight:600; letter-spacing:.1em; text-transform:uppercase; color:rgba(255,255,255,.72)}
   .ctl input{width:120px; accent-color:var(--accent)}
   .ctl output{min-width:2.6em; color:#fff; font-weight:500; letter-spacing:.02em}
+  .models{position:absolute; left:50%; top:calc(22px + env(safe-area-inset-top,0px)); transform:translateX(-50%); display:inline-flex;
+    background:var(--bar); border-radius:999px; padding:4px}
+  .models button{border:0; background:none; border-radius:999px; padding:7px 18px; font-size:13.5px; color:#fff}
+  .models button[aria-pressed="true"]{background:var(--accent)}
   .loading{position:absolute; inset:0; display:grid; place-items:center; font-size:12px; font-weight:600; letter-spacing:.14em; text-transform:uppercase; color:var(--muted); pointer-events:none}
   .loading i{display:block; width:160px; height:2px; background:rgba(0,0,0,.1); margin-top:12px}
   .loading b{display:block; height:100%; width:0; background:var(--accent); transition:width .15s}
@@ -60,7 +64,9 @@
   @media (max-width:820px){
     /* phones / narrow embeds: title on top, buttons as one swipeable row underneath */
     .title{left:16px; top:calc(16px + env(safe-area-inset-top,0px))}
-    .views{left:16px; right:16px; top:calc(78px + env(safe-area-inset-top,0px)); transform:none; flex-direction:row; align-items:center; overflow-x:auto; scrollbar-width:none}
+    .models{left:16px; transform:none; top:calc(74px + env(safe-area-inset-top,0px))}
+    .models button{padding:6px 15px; font-size:13px}
+    .views{left:16px; right:16px; top:calc(124px + env(safe-area-inset-top,0px)); transform:none; flex-direction:row; align-items:center; overflow-x:auto; scrollbar-width:none}
   }
   @media (max-width:640px){
     .bar{left:12px; right:12px; transform:none; max-width:none; flex-wrap:wrap; justify-content:center; gap:8px 16px; border-radius:24px;
@@ -75,6 +81,10 @@
 <body>
 <div id="stage">
   <div class="title"><h1>Interact with model</h1><p id="hint">drag to orbit, pinch or ⌘ + scroll to zoom</p></div>
+  <div class="models" id="models" role="group" aria-label="Model">
+    <button data-model="birdhouse" aria-pressed="true">Birdhouse</button>
+    <button data-model="beeper" aria-pressed="false">Beeper</button>
+  </div>
   <div class="views" id="views" role="group" aria-label="Views"></div>
   <div class="bar">
     <div class="seg" role="group" aria-label="Render mode">
@@ -131,11 +141,11 @@ let toastTimer = 0;
 function toast(msg) { toastEl.textContent = msg; toastEl.classList.add('show'); clearTimeout(toastTimer); toastTimer = setTimeout(() => toastEl.classList.remove('show'), 1400); }
 function dolly(scale) {                                                    // scale < 1 moves closer
   const off = camera.position.clone().sub(controls.target);
-  const d = THREE.MathUtils.clamp(off.length() * scale, 1.5, 180);
+  const d = THREE.MathUtils.clamp(off.length() * scale, zMin, zMax);
   camera.position.copy(controls.target).add(off.setLength(d)); controls.update(); needsRender = true;
 }
 function zoomTo(scale) {                                                   // animated, for the buttons
-  const off = camera.position.clone().sub(controls.target), d = THREE.MathUtils.clamp(off.length() * scale, 1.5, 180);
+  const off = camera.position.clone().sub(controls.target), d = THREE.MathUtils.clamp(off.length() * scale, zMin, zMax);
   fl = { t0: performance.now(), fromT: controls.target.clone(), fromP: camera.position.clone(), toT: controls.target.clone(), toP: controls.target.clone().add(off.setLength(d)), dur: 350 };
 }
 if (coarse) {
@@ -155,15 +165,18 @@ if (coarse) {
 }
 document.getElementById('zIn').onclick = () => zoomTo(.78);
 document.getElementById('zOut').onclick = () => zoomTo(1.28);
-let needsRender = true, settle = 0;          // settle: a few extra frames after load / mode change
+let needsRender = true, settle = 0, zMin = 1.5, zMax = 180;          // settle: a few extra frames after load / mode change
 controls.addEventListener('change', () => { needsRender = true; });
 
 // ---------------- materials ----------------
 const MU = { shell:.26, lime:.26, inner:.3, black:.34, graphite:2.4, glass:.8, lens:1.4, matteblack:.4, irled:1.2, sensor:1.2, statusled:.5,
-  rubber:.6, metal:6.5, pcb:1.8, white:.4, smd:4.0, fpc:.9, gold:6.5, fresnel:.35, irfilter:1.0, irwindow:.9, brass:7.0, cable:1.0, dark:.6 };
+  rubber:.6, metal:6.5, pcb:1.8, white:.4, smd:4.0, fpc:.9, gold:6.5, fresnel:.35, irfilter:1.0, irwindow:.9, brass:7.0, cable:1.0, dark:.6,
+  green:.26, grey:.5, eink:1.2, battery:.8, label:.3, kapton:.6, foam:.15, stiff:.7, tape:.4, led:.5, wirered:1.6, wireblack:1.6 };
 const TINT = { black:'#dcdcdf', graphite:'#d8d8db', lens:'#cfd0d4', matteblack:'#d6d6d9', irled:'#d8d4d6', sensor:'#d6d6d9', rubber:'#d4d4d7',
   dark:'#d9d9dc', inner:'#e4e4e6', irwindow:'#d2cfd1', irfilter:'#d6d3d5', pcb:'#dfe3df', metal:'#e6e6e8', gold:'#e8e4da', brass:'#e8e3d6',
-  glass:'#eef1f4', fpc:'#ece5da', smd:'#e6e3dd', white:'#f4f4f4', statusled:'#f2f4ee', cable:'#d4d4d7' };
+  glass:'#eef1f4', fpc:'#ece5da', smd:'#e6e3dd', white:'#f4f4f4', statusled:'#f2f4ee', cable:'#d4d4d7',
+  green:'#f3f3f4', grey:'#dcdcdf', eink:'#e9e9eb', battery:'#e3e3e6', label:'#f7f7f7', kapton:'#e9e5da', foam:'#d5d5d8', stiff:'#dddad4',
+  tape:'#efece4', led:'#f2f4ee', wirered:'#d8d8db', wireblack:'#cfcfd2' };
 const xU = { ref: { value: 50 } };
 const absorbCache = {};
 const absorbMat = (mu, sheet) => absorbCache[mu + '|' + sheet] ||= new THREE.ShaderMaterial({
@@ -209,12 +222,12 @@ function target(name, w, h, depth, srgb) {
 }
 const dMat = new THREE.ShaderMaterial({
   uniforms: { fIn:{value:null}, nIn:{value:null}, dIn:{value:null}, iIn:{value:null}, fSh:{value:null}, nSh:{value:null}, dSh:{value:null}, iSh:{value:null},
-    res:{value:new THREE.Vector2()}, R:{value:1.5}, cn:{value:.05}, cf:{value:400}, veil:{value:.6},
+    res:{value:new THREE.Vector2()}, R:{value:1.5}, cn:{value:.05}, cf:{value:400}, veil:{value:.6}, dz:{value:.12},
     paper:{value:new THREE.Color(0xffffff)}, lIn:{value:new THREE.Color(0x2b2b2e)}, lSh:{value:new THREE.Color(0x46464a)} },
   vertexShader: 'void main(){ gl_Position = vec4(position.xy, 0.0, 1.0); }',
   fragmentShader: `
     #include <packing>
-    uniform sampler2D fIn, nIn, dIn, iIn, fSh, nSh, dSh, iSh; uniform vec2 res; uniform float R, cn, cf, veil; uniform vec3 paper, lIn, lSh;
+    uniform sampler2D fIn, nIn, dIn, iIn, fSh, nSh, dSh, iSh; uniform vec2 res; uniform float R, cn, cf, veil, dz; uniform vec3 paper, lIn, lSh;
     float vz(sampler2D d, vec2 uv){ return -perspectiveDepthToViewZ(texture2D(d, uv).r, cn, cf); }
     float edges(sampler2D n, sampler2D d, sampler2D idt, vec2 uv, bool mask){
       vec4 ic = texture2D(idt, uv); bool fc = ic.a > .5;
@@ -228,7 +241,7 @@ const dMat = new THREE.ShaderMaterial({
         if (fc != fs) ed = 1.0;
         else {
           if (distance(ic.rgb, is.rgb) > .002) ed = 1.0;
-          float zs = vz(d, uv + o); if (abs(zc - zs) > max(.12, .012 * zc)) ed = 1.0;
+          float zs = vz(d, uv + o); if (abs(zc - zs) > max(dz, .012 * zc)) ed = 1.0;
           vec3 ns = texture2D(n, uv + o).rgb * 2.0 - 1.0; if (dot(normalize(nc), normalize(ns)) < .84) ed = 1.0;
         }
         e += ed;
@@ -276,40 +289,65 @@ function renderDrawing() {
 }
 
 // ---------------- UI ----------------
-const VIEWS = {
-  overall:{ label:'Overall', t:[0,45,-4], p:[32,58,38] },
-  camera: { label:'Camera', t:[0,42.875,5.55], p:[1.6,43.7,9.4] },
-  mouth:  { label:'Mouth', t:[0,37.6,3.9], p:[2.6,41.8,9.6] },
-  roof:   { label:'Roof underside', t:[4.2,47.3,4.2], p:[9.5,43.2,10.5] },
-  wall:   { label:'Wall plate', t:[0,45.2,-15.6], p:[-9,49,-6.5] },
-  side:   { label:'Arm side view', t:[0,44.3,-13.2], p:[16,44.3,-13.2] },
-  sensors:{ label:'IR sensors', t:[0,41.3,5.3], p:[2.2,42.4,8.6] },
-  bay:    { label:'Charging bay', t:[0,39.25,-5.0], p:[2.2,37.9,-9.6] },
-  rear:   { label:'Rear internals', t:[0,40.2,-4.1], p:[2.6,42.6,1.2] },
+// Each model: file, view presets (three.js coords, inches), parts left out of the "Overall" centring, x-ray density scale.
+const MODELS = {
+  birdhouse: { file: 'birdhouse.glb', mu: 1, fit: [.78, .98], exclude: m => m.userData.group === 'arm' || m.name === 'ex_ae1321ce' || m.name === 'ex_82824cd3',
+    views: {
+      overall:{ label:'Overall', t:[0,45,-4], p:[32,58,38] },
+      camera: { label:'Camera', t:[0,42.875,5.55], p:[1.6,43.7,9.4] },
+      mouth:  { label:'Mouth', t:[0,37.6,3.9], p:[2.6,41.8,9.6] },
+      roof:   { label:'Roof underside', t:[4.2,47.3,4.2], p:[9.5,43.2,10.5] },
+      wall:   { label:'Wall plate', t:[0,45.2,-15.6], p:[-9,49,-6.5] },
+      side:   { label:'Arm side view', t:[0,44.3,-13.2], p:[16,44.3,-13.2] },
+      sensors:{ label:'IR sensors', t:[0,41.3,5.3], p:[2.2,42.4,8.6] },
+      bay:    { label:'Charging bay', t:[0,39.25,-5.0], p:[2.2,37.9,-9.6] },
+      rear:   { label:'Rear internals', t:[0,40.2,-4.1], p:[2.6,42.6,1.2] },
+    } },
+  beeper: { file: 'beeper.glb', mu: 2.2, fit: [1.0, 1.0], explodeDir: [1, .5, .62], exclude: () => false,   // explodes along its depth: view the stack from the side
+    views: {
+      overall: { label:'Overall', t:[1.96,0.6,0], p:[-1.4,3.0,8.6] },
+      screen:  { label:'Screen', t:[1.96,0.6,0.1], p:[1.96,0.95,6.2] },
+      keys:    { label:'Keys', t:[3.56,0.6,0.1], p:[5.1,1.5,2.5] },
+      speaker: { label:'Speaker', t:[4.0,0.6,0.06], p:[5.7,1.6,1.6] },
+      flex:    { label:'Display flex', t:[2.8,0.6,0.05], p:[4.4,1.9,2.3] },
+      board:   { label:'Main board', t:[2.35,0.6,-0.02], p:[2.9,2.3,-4.6] },
+      battery: { label:'Battery', t:[1.9,0.5,-0.18], p:[0.6,2.1,-4.2] },
+      port:    { label:'USB-C port', t:[4.19,0.6,-0.1], p:[6.2,1.2,-1.3] },
+      tab:     { label:'Carabiner tab', t:[4.15,1.4,-0.06], p:[5.4,2.3,1.6] },
+      back:    { label:'Back', t:[1.96,0.6,0], p:[5.4,2.4,-6.6] },
+    } },
 };
-const viewsEl = document.getElementById('views');
+let model = /beeper/i.test(location.hash) ? 'beeper' : 'birdhouse', VIEWS = MODELS[model].views;
+const viewsEl = document.getElementById('views'), modelsEl = document.getElementById('models');
 let active = 'overall', fl = null;
-for (const [k, v] of Object.entries(VIEWS)) {
-  const b = document.createElement('button'); b.textContent = v.label; b.dataset.view = k; b.setAttribute('aria-pressed', k === active);
-  b.onclick = () => fly(k); viewsEl.appendChild(b);
+function buildViews() {
+  viewsEl.replaceChildren();
+  for (const [k, v] of Object.entries(VIEWS)) {
+    const b = document.createElement('button'); b.textContent = v.label; b.dataset.view = k; b.setAttribute('aria-pressed', k === active);
+    b.onclick = () => fly(k); viewsEl.appendChild(b);
+  }
 }
+buildViews();
 function fly(k) {
   active = k; viewsEl.querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', b.dataset.view === k));
   let t = new THREE.Vector3(...VIEWS[k].t), p = new THREE.Vector3(...VIEWS[k].p);
   if (k === 'overall' && parts.length) [t, p] = overallFrame();
+  else {                                                     // presets are set for a desktop frame: step back on narrower screens
+    const narrow = Math.max(1, 1.6 / camera.aspect); p = t.clone().add(p.clone().sub(t).multiplyScalar(Math.pow(narrow, .8)));
+  }
   fl = { t0: performance.now(), fromT: controls.target.clone(), fromP: camera.position.clone(), toT: t, toP: p };
 }
-// frame the whole model from the overall direction, centred on the BIRDHOUSE (the wall arm doesn't pull the framing), in the middle of the page
-const isArm = m => m.userData.group === 'arm' || m.name === 'ex_ae1321ce' || m.name === 'ex_82824cd3';
+// frame the whole model from the overall direction, centred on the main body (the birdhouse's wall arm doesn't pull the framing), in the middle of the page
 function overallFrame() {
-  const body = new THREE.Box3(); parts.forEach(m => { if (!isArm(m)) body.expandByObject(m); });
+  const body = new THREE.Box3(); parts.forEach(m => { if (!MODELS[model].exclude(m)) body.expandByObject(m); });
   const c = body.getCenter(new THREE.Vector3());
   let r = 0; const sph = new THREE.Sphere();                     // radius around the birdhouse centre that still contains every part (arm included)
   parts.forEach(m => { if (!m.geometry.boundingSphere) m.geometry.computeBoundingSphere();
     sph.copy(m.geometry.boundingSphere).applyMatrix4(m.matrixWorld); r = Math.max(r, c.distanceTo(sph.center) + sph.radius); });
-  const dir = new THREE.Vector3(...VIEWS.overall.p).sub(new THREE.Vector3(...VIEWS.overall.t)).normalize();
+  const exDir = explode > 0 && MODELS[model].explodeDir;
+  const dir = exDir ? new THREE.Vector3(...exDir).normalize() : new THREE.Vector3(...VIEWS.overall.p).sub(new THREE.Vector3(...VIEWS.overall.t)).normalize();
   const vf = THREE.MathUtils.degToRad(camera.fov) / 2, hf = Math.atan(Math.tan(vf) * camera.aspect);
-  const dist = r / Math.sin(Math.min(vf, hf)) * (explode > 0 ? .98 : .78);
+  const dist = r / Math.sin(Math.min(vf, hf)) * MODELS[model].fit[explode > 0 ? 1 : 0];
   return [c, c.clone().addScaledVector(dir, dist)];
 }
 const setMode = m => {
@@ -326,10 +364,10 @@ document.getElementById('exl').oninput = e => {
 };
 document.getElementById('exl').onchange = () => { if (active === 'overall') fly('overall'); };
 
-// ---------------- load (compressed GLB, with streaming progress) ----------------
-async function fetchModel() {
-  let r = await fetch('birdhouse.glb');
-  if (!r.ok) { const t = await (await fetch('birdhouse.glb.txt')).text(); return Uint8Array.from(atob(t.replace(/\s/g, '')), c => c.charCodeAt(0)).buffer; }
+// ---------------- load (compressed GLB, with streaming progress; each model is fetched once and cached) ----------------
+async function fetchModel(file) {
+  let r = await fetch(file);
+  if (!r.ok) { const t = await (await fetch(file + '.txt')).text(); return Uint8Array.from(atob(t.replace(/\s/g, '')), c => c.charCodeAt(0)).buffer; }
   const total = +r.headers.get('content-length') || 0, reader = r.body.getReader(), chunks = []; let got = 0;
   for (;;) { const { done, value } = await reader.read(); if (done) break; chunks.push(value); got += value.length;
     if (total) document.getElementById('prog').style.width = Math.min(100, got / total * 100) + '%'; }
@@ -337,18 +375,45 @@ async function fetchModel() {
   return buf.buffer;
 }
 const loader = new GLTFLoader().setMeshoptDecoder(MeshoptDecoder);
-fetchModel().then(buf => loader.parseAsync(buf, '')).then(gltf => {
+const cache = {};
+let loadSeq = 0;
+function prepare(name, gltf) {
+  const list = [], mu = MODELS[name].mu;
   gltf.scene.traverse(o => {
     if (!o.isMesh) return;
     const x = o.userData;
     o.userData = { ...x, base: o.position.clone(), ex: new THREE.Vector3(...(x.ex || [0, 0, 0])),
-      absorb: absorbMat(MU[x.mat] ?? .6, x.closed ? 0 : .08), fill: drawFill(x.shell ? 'shell' : x.mat), id: idMat() };
-    o.frustumCulled = false; parts.push(o);
+      absorb: absorbMat((MU[x.mat] ?? .6) * mu, x.closed ? 0 : .08), fill: drawFill(x.shell ? 'shell' : x.mat), id: idMat() };
+    o.frustumCulled = false; list.push(o);
   });
-  scene.add(gltf.scene);
+  const box = new THREE.Box3().setFromObject(gltf.scene), r = box.getBoundingSphere(new THREE.Sphere()).radius;
+  return { root: gltf.scene, list, r };
+}
+async function loadModel(name) {
+  const seq = ++loadSeq;
+  model = name; VIEWS = MODELS[name].views; active = 'overall'; fl = null;
+  modelsEl.querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', b.dataset.model === name));
+  try { history.replaceState(null, '', name === 'birdhouse' ? location.pathname + location.search : '#beeper'); } catch {}
+  buildViews();
+  if (!cache[name]) {
+    document.getElementById('prog').style.width = '0'; document.getElementById('loading').hidden = false;
+    try { cache[name] = prepare(name, await loader.parseAsync(await fetchModel(MODELS[name].file), '')); }
+    catch (err) { if (seq === loadSeq) document.getElementById('loading').firstElementChild.textContent = 'Could not load the model'; console.error(err); return; }
+    if (seq !== loadSeq) return;                               // the visitor switched again while this one loaded
+  }
+  const m = cache[name];
+  for (const c of Object.values(cache)) scene.remove(c.root);
+  scene.add(m.root); parts.length = 0; parts.push(...m.list);
+  explode = 0; document.getElementById('exl').value = 0; document.getElementById('exlV').textContent = '0%';
+  parts.forEach(p => p.position.copy(p.userData.base));
+  // camera range, clipping and drawing thresholds follow the model's size (the birdhouse is ~4x the beeper)
+  zMin = m.r * .1; zMax = m.r * 9; camera.near = m.r * .004; camera.far = m.r * 40; camera.updateProjectionMatrix();
+  dMat.uniforms.dz.value = .12 * m.r / 13;
   const [t0, p0] = overallFrame(); controls.target.copy(t0); camera.position.copy(p0); camera.lookAt(t0);
   document.getElementById('loading').hidden = true; controls.update(); camera.updateMatrixWorld(); needsRender = true; settle = 4;
-}).catch(err => { document.getElementById('loading').firstElementChild.textContent = 'Could not load the model'; console.error(err); });
+}
+modelsEl.addEventListener('click', e => { const b = e.target.closest('button'); if (b && b.dataset.model !== model) loadModel(b.dataset.model); });
+loadModel(model);
 
 // ---------------- loop ----------------
 camera.position.set(...VIEWS.overall.p); controls.target.set(...VIEWS.overall.t); camera.lookAt(controls.target); controls.update();

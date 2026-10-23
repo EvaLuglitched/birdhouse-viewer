@@ -76,6 +76,43 @@
     .zoom{right:12px} .zoom button{width:36px; height:36px}
     .interact{bottom:calc(128px + env(safe-area-inset-bottom,0px))}
   }
+  /* ---- button motion (after React Bits PillNav: fill hover, rolling label, springy sliding indicator, intro) ----
+     Rest states look exactly as before; only hover / press / change / load are animated. */
+  .views button, .zoom button, .models button, .seg button{position:relative; overflow:hidden; isolation:isolate;
+    transition:transform .5s cubic-bezier(.34,1.56,.64,1), background-color .3s ease, border-color .3s ease, color .3s ease}
+  .views button:hover, .zoom button:hover{background:rgba(255,255,255,.85)}          /* the fill circle replaces the old grey hover */
+  .zoom button:hover{background:rgba(255,255,255,.9)}
+  .views button[aria-pressed="true"]:hover{background:var(--accent)}
+  .views button:active, .zoom button:active, .models button:active, .seg button:active{transform:scale(.94); transition-duration:.12s}
+  .pn-fill{position:absolute; left:50%; top:100%; width:240%; aspect-ratio:1; border-radius:50%; z-index:-1; pointer-events:none;
+    background:#000; transform:translate(-50%,-50%) scale(0); transition:transform .5s cubic-bezier(.22,1,.36,1)}
+  .zoom .pn-fill{width:160%}
+  button[aria-pressed="true"] > .pn-fill{background:#D94A0E}
+  .models .pn-fill, .seg .pn-fill{background:rgba(255,255,255,.16)}
+  .models button[aria-pressed="true"] > .pn-fill, .seg button[aria-pressed="true"] > .pn-fill{background:rgba(255,255,255,.12)}
+  button:hover > .pn-fill{transform:translate(-50%,-50%) scale(1)}
+  .pn-lbl{display:inline-grid; overflow:hidden; vertical-align:top; line-height:inherit}
+  .pn-lbl > span{grid-area:1/1; transition:transform .45s cubic-bezier(.22,1,.36,1)}
+  .pn-lbl > span + span{transform:translateY(105%); color:#fff}
+  button:hover > .pn-lbl > span:first-child{transform:translateY(-105%)}
+  button:hover > .pn-lbl > span + span{transform:translateY(0)}
+  .pn-ind{position:absolute; left:0; top:0; border-radius:999px; background:var(--accent); pointer-events:none; z-index:0; will-change:transform,width}
+  .seg{position:relative}
+  .pn-has-ind > button{z-index:1}
+  .pn-has-ind > button[aria-pressed="true"]{background:transparent}
+  .views button.pn-pop{animation:pn-pop .55s cubic-bezier(.34,1.56,.64,1)}
+  @keyframes pn-pop{0%{transform:scale(.92)} 60%{transform:scale(1.05)} 100%{transform:scale(1)}}
+  .pn-intro{animation:pn-in .6s cubic-bezier(.34,1.56,.64,1) both}
+  .pn-ind.pn-intro{animation:pn-fade .45s ease both}
+  @keyframes pn-fade{from{opacity:0}}
+  @keyframes pn-in{from{opacity:0; transform:translateY(10px) scale(.86)} to{opacity:1; transform:none}}
+  @media (hover:none){ button:hover > .pn-fill{transform:translate(-50%,-50%) scale(0)} button:hover > .pn-lbl > span:first-child{transform:none}
+    button:hover > .pn-lbl > span + span{transform:translateY(105%)} }
+  @media (prefers-reduced-motion:reduce){
+    .views button, .zoom button, .models button, .seg button, .pn-fill, .pn-lbl > span{transition:none}
+    .pn-intro, .views button.pn-pop{animation:none}
+    .pn-fill{display:none} .pn-lbl > span + span{display:none} button:hover > .pn-lbl > span:first-child{transform:none}
+  }
 </style>
 </head>
 <body>
@@ -434,6 +471,98 @@ renderer.setAnimationLoop(now => {
   needsRender = false;
   mode === 'xray' ? renderXray() : renderDrawing();
 });
+</script>
+<script type="module">
+// Button motion after React Bits PillNav (hoverEffect "fill", bounce .3, stretch .5, intro), without changing the layout.
+const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+const BOUNCE = 0.3, STRETCH = 0.5;
+
+// Fill circle + rolling label inside a button. Text is read once; buttons whose text changes later are not decorated.
+function decorate(b) {
+  if (b.dataset.pn) return;
+  b.dataset.pn = '1';
+  const text = b.textContent;
+  const fill = document.createElement('span'); fill.className = 'pn-fill'; fill.setAttribute('aria-hidden', 'true');
+  const lbl = document.createElement('span'); lbl.className = 'pn-lbl';
+  const a = document.createElement('span'); a.textContent = text;
+  const c = document.createElement('span'); c.textContent = text; c.setAttribute('aria-hidden', 'true');
+  lbl.append(a, c);
+  b.replaceChildren(fill, lbl);
+}
+function intro(buttons, delay0 = 0) {
+  if (reduce) return;
+  buttons.forEach((b, i) => {
+    b.classList.remove('pn-intro'); void b.offsetWidth;
+    b.style.animationDelay = `${delay0 + i * 45}ms`; b.classList.add('pn-intro');
+    b.addEventListener('animationend', () => { b.classList.remove('pn-intro'); b.style.animationDelay = ''; }, { once: true });
+  });
+}
+
+// Springy sliding indicator for the segmented groups (black bars): it moves and stretches along its travel, then settles.
+function slider(group) {
+  const ind = document.createElement('span'); ind.className = 'pn-ind'; ind.setAttribute('aria-hidden', 'true');
+  group.prepend(ind); group.classList.add('pn-has-ind');
+  const k = 420, c = 2 * Math.sqrt(k) * (1 - BOUNCE);         // spring stiffness and damping (bounce 0 = no overshoot)
+  const s = { x: 0, w: 0, vx: 0, vw: 0, tx: 0, tw: 0, y: 0, h: 0 };
+  let raf = 0, last = 0, placed = false;
+  const target = () => group.querySelector('button[aria-pressed="true"]');
+  const draw = () => {
+    const stretch = 1 + Math.min(0.35, Math.abs(s.vx) / 2600) * STRETCH * 2;   // longer while moving fast
+    ind.style.width = `${s.w}px`; ind.style.height = `${s.h}px`;
+    ind.style.transform = `translate(${s.x}px, ${s.y}px) scaleX(${stretch}) scaleY(${1 / Math.sqrt(stretch)})`;
+    ind.style.transformOrigin = `${s.vx >= 0 ? 'right' : 'left'} center`;
+  };
+  const step = now => {
+    const dt = Math.min(0.032, (now - last) / 1000 || 0.016); last = now;
+    for (const [p, v, t] of [['x', 'vx', 'tx'], ['w', 'vw', 'tw']]) {
+      const a = -k * (s[p] - s[t]) - c * s[v];
+      s[v] += a * dt; s[p] += s[v] * dt;
+    }
+    draw();
+    if (Math.abs(s.x - s.tx) + Math.abs(s.w - s.tw) > 0.2 || Math.abs(s.vx) + Math.abs(s.vw) > 2) raf = requestAnimationFrame(step);
+    else { s.x = s.tx; s.w = s.tw; s.vx = s.vw = 0; draw(); raf = 0; }
+  };
+  const update = (animate = true) => {
+    const b = target(); if (!b) return;
+    s.tx = b.offsetLeft; s.tw = b.offsetWidth; s.y = b.offsetTop; s.h = b.offsetHeight;
+    if (!animate || reduce || !placed) { s.x = s.tx; s.w = s.tw; s.vx = s.vw = 0; placed = true; draw(); return; }
+    if (!raf) { last = performance.now(); raf = requestAnimationFrame(step); }
+  };
+  new MutationObserver(() => update(true)).observe(group, { subtree: true, attributes: true, attributeFilter: ['aria-pressed'] });
+  new ResizeObserver(() => update(false)).observe(group);
+  document.fonts?.ready.then(() => update(false));
+  update(false);
+}
+
+const groups = ['#models', '.seg'].map(q => document.querySelector(q)).filter(Boolean);
+const views = document.getElementById('views');
+document.querySelectorAll('#models button, .seg button, .zoom button').forEach(decorate);
+groups.forEach(slider);
+
+// View buttons are rebuilt on every model switch: decorate them, play the intro, pop the newly active one.
+let firstViews = true;
+const prepViews = () => {
+  const bs = [...views.querySelectorAll('button')];
+  bs.forEach(decorate);
+  intro(bs, firstViews ? 120 : 0); firstViews = false;
+};
+new MutationObserver(muts => {
+  if (muts.some(m => m.type === 'childList')) { prepViews(); return; }
+  for (const m of muts) {
+    const b = m.target;
+    if (m.attributeName === 'aria-pressed' && b.getAttribute('aria-pressed') === 'true' && !reduce && !b.classList.contains('pn-intro')) {
+      b.classList.remove('pn-pop'); void b.offsetWidth; b.classList.add('pn-pop');
+      b.addEventListener('animationend', () => b.classList.remove('pn-pop'), { once: true });
+    }
+  }
+}).observe(views, { childList: true, subtree: true, attributes: true, attributeFilter: ['aria-pressed'] });
+if (views.children.length) prepViews();
+for (const q of ['#models', '.seg', '.zoom']) {            // each group comes in one pill after another; an indicator with its button
+  const g = document.querySelector(q); if (!g) continue;
+  const bs = [...g.querySelectorAll('button')]; intro(bs, 0);
+  const ind = g.querySelector('.pn-ind'), on = bs.findIndex(b => b.getAttribute('aria-pressed') === 'true');
+  if (ind && on >= 0) intro([ind], on * 45);
+}
 </script>
 </body>
 </html>
